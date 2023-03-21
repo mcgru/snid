@@ -30,6 +30,8 @@ import (
 	"fmt"
 	"log"
 	"net"
+	"strconv"
+	"strings"
 
 	"src.agwa.name/go-listener"
 )
@@ -40,6 +42,7 @@ func main() {
 		defaultHostname string
 		mode            string
 		proxyProto      bool
+		proxyHost       string
 		unixDirectory   string
 		backendCidr     []*net.IPNet
 		backendPort     int
@@ -50,10 +53,38 @@ func main() {
 		return nil
 	})
 	flag.StringVar(&flags.defaultHostname, "default-hostname", "", "Default hostname if client does not provide SNI")
-	flag.StringVar(&flags.mode, "mode", "", "unix, tcp, or nat46")
+	flag.StringVar(&flags.mode, "mode", "tcp", "unix, tcp, or nat46")
 	flag.BoolVar(&flags.proxyProto, "proxy-proto", false, "Use PROXY protocol when talking to backend (tcp, unix modes)")
+	flag.Func("proxy", "Proxy to use. --proxy-proto will be used, CONNECT inserted", func(arg string) error {
+		if strings.Index(arg, ":") < 0 {
+			arg = arg + ":3128" // default proxy port (squid)
+		}
+		host, port, err := net.SplitHostPort(arg)
+		if err != nil {
+			return err
+		}
+		arg = host + ":" + port // reassign
+		flags.proxyHost = host
+
+		if p, err := strconv.Atoi(port); err != nil {
+			log.Printf("WARNING: port in '%s' is not numerical, cannot convert it with atoi. Defaulting to 443.", arg)
+			flags.backendPort = 443
+		} else {
+			flags.backendPort = p
+		}
+		flags.mode = "tcp"
+		_, ipnet, err := net.ParseCIDR(host + "/32")
+		if err != nil {
+			return err
+		}
+		flags.backendCidr = append(flags.backendCidr, ipnet)
+		return nil
+	})
 	flag.StringVar(&flags.unixDirectory, "unix-directory", "", "Path to directory containing backend UNIX sockets (unix mode)")
 	flag.Func("backend-cidr", "CIDR of allowed backends (repeatable) (tcp, nat46 modes)", func(arg string) error {
+		if arg == "0/0" {
+			arg = "0.0.0.0/0"
+		}
 		_, ipnet, err := net.ParseCIDR(arg)
 		if err != nil {
 			return err
@@ -77,6 +108,7 @@ func main() {
 	server := &Server{
 		ProxyProtocol:   flags.proxyProto,
 		DefaultHostname: flags.defaultHostname,
+		proxyHost:       flags.proxyHost,
 	}
 
 	switch flags.mode {

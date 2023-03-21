@@ -41,6 +41,7 @@ type Server struct {
 	Backend         BackendDialer
 	ProxyProtocol   bool
 	DefaultHostname string
+	proxyHost       string
 }
 
 func (server *Server) peekClientHello(clientConn net.Conn) (*tls.ClientHelloInfo, net.Conn, error) {
@@ -80,7 +81,12 @@ func (server *Server) handleConnection(clientConn net.Conn) {
 		return
 	}
 
-	backendConn, err := server.Backend.Dial(clientHello.ServerName, clientConn)
+	whereToConnect := clientHello.ServerName
+	if server.proxyHost != "" {
+		whereToConnect = server.proxyHost
+	}
+
+	backendConn, err := server.Backend.Dial(whereToConnect, clientConn)
 	if err != nil {
 		log.Printf("Ignoring connection from %s because dialing backend failed: %s", clientConn.RemoteAddr(), err)
 		return
@@ -92,6 +98,22 @@ func (server *Server) handleConnection(clientConn net.Conn) {
 		if _, err := backendConn.Write(header.Format()); err != nil {
 			log.Printf("Error writing PROXY header to backend: %s", err)
 			return
+		}
+	}
+
+	if server.proxyHost != "" {
+		if _, err := backendConn.Write([]byte("CONNECT " + clientHello.ServerName + ":443 HTTP/1.1\n\n")); err != nil {
+			log.Printf("Error writing CONNECT to proxy host: %s", err)
+			return
+		} else {
+			// log.Printf("INFO: %d bytes written to %+v\n", n, backendConn.RemoteAddr())
+		}
+		buf := make([]byte, 2000)
+		if _, err := backendConn.Read(buf); err != nil {
+			log.Printf("Error reading reply on CONNECT from proxy host: %s", err)
+			return
+		} else {
+			// log.Printf("Connected to proxy host '%s' as backend %+v, got %d bytes of reply '%v'\n", server.proxyHost, server.Backend, n, buf)
 		}
 	}
 
