@@ -1,0 +1,18 @@
+[Unit]
+##Documentation=man:systemd-sysv-generator(8)
+Description=SNI-based transparent proxy
+Before=multi-user.target
+After=network.target
+After=network-online.target
+
+[Service]
+EnvironmentFile=/etc/snid.conf
+ExecStart=/usr/bin/snid --listen ${PORT} --proxy ${HOST}:${PORT}
+#Type=notify
+Restart=always
+RestartSec=10s
+##RestartPreventExitStatus=255
+##RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target
